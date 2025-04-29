@@ -1,3 +1,3 @@
-from .api_docs_middleware import SwaggerLikeMiddleware
+from .api_docs_middleware import ApiDocumentation
 
-__all__ = ['SwaggerLikeMiddleware'] 
+__all__ = ['ApiDocumentation']
