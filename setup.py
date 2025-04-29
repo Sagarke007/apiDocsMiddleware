@@ -12,6 +12,7 @@ setup(
         "starlette",
         "pyjwt",
         "flask",
+        "request"
     ],
     python_requires=">=3.7",
 )
