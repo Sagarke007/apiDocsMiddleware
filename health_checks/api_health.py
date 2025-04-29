@@ -1,7 +1,7 @@
+""""
+This module provides a middleware class for FastAPI and Flask applications
 """
- Middleware to generate OpenAPI documentation for FastAPI and Flask applications.
- This middleware also tracks response times and function/class details for each endpoint.
- """
+
 
 import time
 from typing import Dict
@@ -11,7 +11,14 @@ from flask import Flask, request, jsonify
 from fastapi import FastAPI, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
+import logging
+from pathlib import Path
 
+from apiDocsMiddleware.health_checks.logger import set_logger
+
+# Assuming set_logger function is already available as you provided
+logger = logging.getLogger("api_health_check_logger")
+set_logger("api_health_check_logger", logging.INFO, Path("logs/api_health_check.log"))
 
 class ApiHealthCheckMiddleware:
     """
@@ -27,6 +34,7 @@ class ApiHealthCheckMiddleware:
         self.required_client_id = required_client_id
         self.endpoint_stats = {}  # To store response times for each endpoint
         self.function_details = {}  # To store function/class details for each endpoint
+        logger.info("ApiHealthCheckMiddleware initialized")
 
     def _detect_framework(self) -> str:
         """
@@ -46,6 +54,7 @@ class ApiHealthCheckMiddleware:
         authorization_header = request.headers.get("Authorization")
 
         if not authorization_header:
+            logger.warning("Authorization header missing")
             raise HTTPException(status_code=401, detail="Authorization header missing")
 
         token = authorization_header.split(" ")[1]  # Extract token from "Bearer <token>"
@@ -56,18 +65,22 @@ class ApiHealthCheckMiddleware:
             client_id = decoded_token.get("clientId")
 
             if not project_id or not client_id:
+                logger.warning("Token is missing required fields")
                 raise HTTPException(status_code=401, detail="Token is missing required fields")
 
             # Check if the provided IDs match the required values
             if project_id != self.required_project_id or client_id != self.required_client_id:
+                logger.warning("Token project_id or client_id mismatch")
                 raise HTTPException(status_code=401, detail="Token project_id or client_id mismatch")
 
         except jwt.ExpiredSignatureError:
+            logger.error("Token has expired")
             raise HTTPException(status_code=401, detail="Token has expired")
         except jwt.InvalidTokenError:
+            logger.error("Invalid token")
             raise HTTPException(status_code=401, detail="Invalid token")
         except Exception as e:
-            # Handle unexpected errors
+            logger.error(f"Unexpected error during JWT validation: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
         return True
@@ -92,20 +105,16 @@ class ApiHealthCheckMiddleware:
                 class_name = None
                 nested_functions = []
 
-                # Check if the endpoint is part of a class
                 if hasattr(route.endpoint, "__name__"):
-                    function_name = route.endpoint.__name__  # Get function name
+                    function_name = route.endpoint.__name__
 
                 if hasattr(route.endpoint, "__self__"):
-                    # Get class name if it's part of a class
                     class_name = route.endpoint.__self__.__class__.__name__
 
-                    # For nested functions, let's capture the methods of the class or any methods it calls
                     if hasattr(route.endpoint.__self__, function_name):
                         instance = route.endpoint.__self__
                         function = getattr(instance, function_name)
 
-                        # Inspect the methods called by this function
                         methods = [method for method in dir(instance) if callable(getattr(instance, method)) and not method.startswith("_")]
                         nested_functions.extend([{"class": instance.__class__.__name__, "function": method} for method in methods])
 
@@ -115,13 +124,11 @@ class ApiHealthCheckMiddleware:
                     "nested_functions": nested_functions if nested_functions else []
                 }
 
-                # Track response time for the route
                 self.endpoint_stats[route_path] = {
-                    "average_response_time": 0,  # Initial placeholder for average response time
-                    "total_requests": 0,  # Track number of requests for calculating average
+                    "average_response_time": 0,
+                    "total_requests": 0,
                 }
 
-            # Add response times and function details to the schema
             return {
                 "openapi": self.app.openapi_schema,
                 "response_times": self.endpoint_stats,
@@ -129,7 +136,6 @@ class ApiHealthCheckMiddleware:
             }
 
         elif self.framework == "flask":
-            # Minimal hardcoded example for Flask
             return {
                 "openapi": "3.0.0",
                 "info": {
@@ -160,26 +166,31 @@ class ApiHealthCheckMiddleware:
 
         self.function_details[endpoint].append(func_name)
 
-    # Attach to FastAPI as middleware
     async def asgi_middleware(self, request, call_next):
         start_time = time.time()
 
-        if not self._validate_jwt(request):
-            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+        try:
+            if not self._validate_jwt(request):
+                return JSONResponse(content={"detail": "Unauthorized"}, status_code=401)
+        except HTTPException as e:
+            logger.warning(f"Unauthorized request: {e.detail}")
+            return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            return JSONResponse(status_code=500, content={"detail": str(e)})
 
         if request.url.path == "/health-check":
             if not self.openapi_doc:
                 self.openapi_doc = self._build_openapi_doc()
             return JSONResponse(content=self.openapi_doc)
 
-        # Track response time and function details
         response = await call_next(request)
         self._track_endpoint_stats(request.url.path, start_time)
-        self._track_function_details(request.url.path, "Some function name or class")  # Adjust this as needed
+        self._track_function_details(request.url.path, "Some function name or class")  # Adjust as needed
+        logger.info(f"Request to {request.url.path} completed with status {response.status_code}")
 
         return response
 
-    # Attach to Flask via before_request
     def flask_before_request(self):
         start_time = time.time()
 
@@ -191,26 +202,21 @@ class ApiHealthCheckMiddleware:
                 self.openapi_doc = self._build_openapi_doc()
             return jsonify(self.openapi_doc)
 
-        # Track response time and function details
         self._track_endpoint_stats(request.path, start_time)
-        self._track_function_details(request.path, "Some function name or class")  # Adjust this as needed
+        self._track_function_details(request.path, "Some function name or class")
+        logger.info(f"Request to {request.path} received")
 
     def attach(self):
-        """
-        Automatically attach to app based on framework.
-        """
         if self.framework == "fastapi":
             self.app.add_middleware(BaseHTTPMiddleware, dispatch=self.asgi_middleware)
         elif self.framework == "flask":
             self.app.before_request(self.flask_before_request)
 
     def get_health_info(self):
-        """
-        Returns the health information with response times and function details.
-        """
         health_info = {
             "response_times": self.endpoint_stats,
             "function_details": self.function_details,
             "api_document": self._build_openapi_doc()
         }
+        logger.info("Health info retrieved")
         return health_info
