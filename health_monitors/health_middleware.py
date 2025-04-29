@@ -13,7 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
 
 
-class ApiDocumentation:
+class HealthCheckMiddleware:
     """
     Middleware class to handle OpenAPI documentation and JWT validation for FastAPI and Flask frameworks.
     """
