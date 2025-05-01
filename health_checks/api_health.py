@@ -1,8 +1,5 @@
 
-import logging
-logger = logging.getLogger("api_health_middleware")
-logging.basicConfig(level=logging.INFO)
-
+import httpx
 import time
 import inspect
 import json
@@ -33,6 +30,33 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         # Initialize endpoints and save immediately
         self._initialize_endpoints(app)
         self._save_data_with_retry()
+        # Send health check data to Gatekeeper API
+
+    def send_data_to_gatekeeper(self, api_url: str,data: dict):
+        """
+        Call the provided API and send the endpoint health check data.
+        """
+        print(data)
+        print(api_url)
+        # try:
+
+        with httpx.Client() as client:
+
+            print(api_url)
+            data = {
+                "client_id": self.client_id,
+                "project_id": self.project_id,
+                "endpoints": self.endpoint_data
+            }
+            response = client.post(api_url,json=data)
+
+            # Check if the request was successful
+            if response.status_code == 200:
+                logger.info(f"Health check data successfully sent to {api_url}")
+            else:
+                logger.warning(f"Failed to send health check data. Status code: {response.status_code}")
+        # except httpx.RequestError as e:
+        #     logger.error(f"An error occurred while sending health check data: {str(e)}")
 
     async def dispatch(self, request: Request, call_next):
         """
@@ -70,6 +94,21 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                 # Save actual data
                 with open(self.storage_file, "w") as f:
                     json.dump(self.endpoint_data, f, indent=2, ensure_ascii=False)
+                print(self.endpoint_data)
+                gatekeeper_api_url = "https://dev.viewcurry.com/beacon/upload"
+
+                # async with httpx.AsyncClient() as client:
+                #
+                #     print(api_url)
+                #     response = await client.post(api_url, json=data)
+                #
+                #     # Check if the request was successful
+                #     if response.status_code == 200:
+                #         logger.info(f"Health check data successfully sent to {api_url}")
+                #     else:
+                #         logger.warning(f"Failed to send health check data. Status code: {response.status_code}")
+
+                self.send_data_to_gatekeeper(gatekeeper_api_url, self.endpoint_data)
                 return True
 
             except Exception as e:
