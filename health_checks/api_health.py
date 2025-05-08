@@ -25,6 +25,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         self.client_id = client_id
         self.endpoint_data = []
         self._initialize_endpoints(app)
+        self.framework = self.detect_framework(app)
         self._save_data_with_retry()
 
     def send_data_to_gatekeeper(self, api_url: str, data: dict):
@@ -32,7 +33,8 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             data = {
                 "client_id": self.client_id,
                 "project_id": self.project_id,
-                "endpoints": self.endpoint_data
+                "framework": self.framework,
+                "endpoints": self.endpoint_data,
             }
             response = client.post(api_url, json=data)
 
@@ -49,12 +51,10 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         return str(request.url.path)
 
     async def dispatch(self, request: Request, call_next):
-        print("Middleware triggered!")  # for debugging
         full_url = request.url
         #path_template = request.scope.get("route").path
         path = self._get_route_path_template(request)
         # This gives the template path with variables
-        print("request.url", request.url)
         method = request.method.lower()
 
         start_time = time.time()
@@ -68,7 +68,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
     def _save_data_with_retry(self, max_attempts: int = 3):
         for attempt in range(max_attempts):
             try:
-                gatekeeper_api_url = "https://dev.viewcurry.com/beacon/upload/send-api-health-data"
+                gatekeeper_api_url = "https://dev.viewcurry.com/beacon/gatekeeper/upload/send-api-health-data"
                 self.send_data_to_gatekeeper(gatekeeper_api_url, self.endpoint_data)
                 return True
 
@@ -79,6 +79,15 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         logger.error(f"Failed to save after {max_attempts} attempts")
         return False
 
+    def detect_framework(self, app):
+        module = type(app).__module__
+        if 'fastapi' in module:
+            return 'FastAPI'
+        elif 'starlette' in module:
+            return 'FastAPI'
+        elif 'flask' in module:
+            return 'Flask'
+        return f'Unknown ({module})'
     def _initialize_endpoints(self, app):
         try:
             for route in app.app.routes:
@@ -95,13 +104,12 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         class_name, functions = self._get_class_and_functions(endpoint_func)
         endpoint_info = {
             "_path": path,
-            "request_url":"",
+            "request_url":"https://dev.astranest.ai" + path,
             "type": method,
             "summary": self._generate_summary(path, endpoint_func),
             "response_time": 0,
             "functions": functions
         }
-
         self.endpoint_data.append(endpoint_info)
 
     def _get_class_and_functions(self, endpoint_func):
@@ -124,7 +132,6 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             })
             # Add any functions it calls internally
             called_funcs = self._get_called_functions(endpoint_func)
-            print("called_funcs", called_funcs)
             functions.extend(called_funcs)
 
         return class_name, functions
