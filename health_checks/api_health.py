@@ -183,7 +183,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         security_schemes = self._generate_security_schemes(route)
         endpoint_info = {
             "_path": path,
-            "request_url":"https://dev.astranest.ai" + path,
+            "request_url":"",
             "type": method,
             "summary": self._generate_summary(path, endpoint_func),
             "response_time": 0,

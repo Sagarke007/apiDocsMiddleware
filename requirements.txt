@@ -4,3 +4,4 @@ starlette
 pyjwt
 flask
 httpx
+requests
