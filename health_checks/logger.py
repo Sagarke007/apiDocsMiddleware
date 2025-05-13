@@ -15,6 +15,8 @@ import logging
 import os
 from pathlib import Path
 from tempfile import gettempdir
+from typing import Optional
+
 import requests  # Import requests to send logs to the server
 
 class OneLineLogFormatter(logging.Formatter):
@@ -54,12 +56,11 @@ class CentralizedServerHandler(logging.Handler):
             # Handle exceptions (e.g., log to stderr or a fallback file)
             print(f"Failed to send log to server: {e}")
 
-
 def set_logger(
-    log_name: str,
-    level: int = logging.WARNING,
-    log_file_path: Path | None = None,
-    server_url: str | None = None  # Add server_url parameter
+        log_name: str,
+        level: int = logging.WARNING,
+        log_file_path: Optional[Path] = None,
+        server_url: Optional[str] = None
 ) -> logging.Logger:
     """Create if needed and set a named logger with given log level, our standard format of:
         '2017-06-06:17:07:02,158 DEBUG    [log.py:11 in func()] This is a debug log'
