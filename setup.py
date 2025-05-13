@@ -12,6 +12,8 @@ setup(
         "starlette",
         "pyjwt",
         "flask",
+        "httpx",
+        "requests",
     ],
     python_requires=">=3.7",
 )
