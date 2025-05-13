@@ -191,7 +191,6 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             "schema": schema,
             "security_schemes": security_schemes,
         }
-        print(endpoint_info)
         self.endpoint_data.append(endpoint_info)
 
     def _get_class_and_functions(self, endpoint_func):
