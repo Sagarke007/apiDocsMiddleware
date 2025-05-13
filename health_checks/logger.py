@@ -81,6 +81,7 @@ def set_logger(
         logging.Logger: The created logger
     """
     logger = logging.getLogger(log_name)
+    logger.propagate = False  # Prevent bubbling to root logger
     min_level = level
     # logger level to minimum asked so messages get passed to handlers of all levels
     for handler in logger.handlers:
