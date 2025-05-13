@@ -243,7 +243,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
     def _update_endpoint_stats(self, path: str, method: str, response_time: float, full_url: str):
         for endpoint in self.endpoint_data:
             if endpoint["_path"] == path and endpoint["type"] == method:
-                endpoint["request_url"] = full_url._url
+                endpoint["request_url"] = full_url
                 endpoint["response_time"] = response_time
                 break
 
