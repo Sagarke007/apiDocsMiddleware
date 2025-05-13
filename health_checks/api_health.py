@@ -107,6 +107,8 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             # Optional: remove "code" from message if you don’t want duplication
             log_entry["response"] = message_data
             self._log_json(log_entry)
+            self._update_endpoint_stats(path, method, process_time, full_url)
+            self._save_data_with_retry()
             return new_response
 
         except Exception as exc:
@@ -119,6 +121,8 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                 "traceback": traceback.format_exc()
             }
             self._log_json(log_entry)
+            self._update_endpoint_stats(path, method, process_time, full_url)
+            self._save_data_with_retry()
             raise exc
 
     def _log_json(self, data):
