@@ -146,7 +146,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         for attempt in range(max_attempts):
             try:
                 gatekeeper_api_url = "https://dev.viewcurry.com/beacon/gatekeeper/upload/send-api-health-data"
-                self.send_data_to_gatekeeper(gatekeeper_api_url, self.endpoint_data)
+                self.send_data_to_gatekeeper(gatekeeper_api_url)
                 return True
 
             except Exception as e:
