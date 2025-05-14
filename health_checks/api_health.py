@@ -21,21 +21,22 @@ log_path = Path("logs/api_health_middleware.log")
 logger = set_logger(log_name="api_health_middleware", level=20, log_file_path=log_path)  # INFO = 20
 
 class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, secret_key: str, project_id: str, client_id: str):
+
+    def __init__(self, app, DSN:str):
         super().__init__(app)
-        self.secret_key = secret_key
-        self.project_id = project_id
-        self.client_id = client_id
+        self.DSN = DSN
         self.endpoint_data = []
         self._initialize_endpoints(app)
         self.framework = self.detect_framework(app)
         self._save_data_with_retry()
 
-    def send_data_to_gatekeeper(self, api_url: str, data: dict):
+
+    def send_data_to_gatekeeper(self, api_url: str):
+        """Send data to the gatekeeper API."""
+
         with httpx.Client() as client:
             data = {
-                "client_id": self.client_id,
-                "project_id": self.project_id,
+                 "dsn": self.DSN ,
                 "framework": self.framework,
                 "endpoints": self.endpoint_data,
             }
@@ -45,6 +46,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                 logger.info(f"Health check data successfully sent to {api_url}")
             else:
                 logger.warning(f"Failed to send health check data. Status code: {response.status_code}")
+
 
     def _get_route_path_template(self, request: Request) -> str:
         for route in request.app.routes:
@@ -107,8 +109,6 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             # Optional: remove "code" from message if you don’t want duplication
             log_entry["response"] = message_data
             self._log_json(log_entry)
-            self._update_endpoint_stats(path, method, process_time, full_url)
-            self._save_data_with_retry()
             return new_response
 
         except Exception as exc:
@@ -121,8 +121,6 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                 "traceback": traceback.format_exc()
             }
             self._log_json(log_entry)
-            self._update_endpoint_stats(path, method, process_time, full_url)
-            self._save_data_with_retry()
             raise exc
 
     def _log_json(self, data):
@@ -134,8 +132,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         #     f.write(json.dumps(data) + "\n")
         with httpx.Client() as client:
             data = {
-                "client_id": self.client_id,
-                "project_id": self.project_id,
+                "dsn": self.DSN,
                 "response":data
             }
             response = client.post(api_url, json=data)

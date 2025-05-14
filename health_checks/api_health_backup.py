@@ -12,6 +12,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.routing import APIRoute
 from starlette.routing import Match
 from health_checks.logger import set_logger  # adjust path if needed
+from starlette.responses import Response
+import traceback
+import json
 
 # Setup logger
 log_path = Path("logs/api_health_middleware.log")
@@ -51,19 +54,96 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         return str(request.url.path)
 
     async def dispatch(self, request: Request, call_next):
-        full_url = request.url
-        #path_template = request.scope.get("route").path
+        full_url = str(request.url)
         path = self._get_route_path_template(request)
-        # This gives the template path with variables
         method = request.method.lower()
-
         start_time = time.time()
-        response = await call_next(request)
-        process_time = time.time() - start_time
 
-        self._update_endpoint_stats(path, method, process_time,full_url)
-        self._save_data_with_retry()
-        return response
+        log_entry = {
+            "method": method,
+            "path": path,
+            "full_url": full_url,
+            "timestamp": time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
+        }
+
+        try:
+            # Read and store the request body
+            request_body_bytes = await request.body()
+            try:
+                request_body = request_body_bytes.decode("utf-8")
+                # Try to parse as JSON
+                log_entry["request_body"] = json.loads(request_body)
+            except Exception:
+                log_entry["request_body"] = request_body  # Keep raw if not JSON
+
+            # Rebuild the request stream so it can be read again
+            request = Request(request.scope, receive=lambda: {
+                "type": "http.request",
+                "body": request_body_bytes,
+                "more_body": False
+            })
+
+            response = await call_next(request)
+            original_body = b""
+            async for chunk in response.body_iterator:
+                original_body += chunk
+
+            # Step 2: Rebuild response with full body
+            new_response = Response(
+                content=original_body,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type
+            )
+
+            process_time = time.time() - start_time
+            log_entry["process_time"] = process_time
+            try:
+                message_data = json.loads(original_body)
+                message_data.pop("code", None)
+            except:
+                message_data = original_body.decode("utf-8")
+            log_entry["status_code"] = response.status_code # Extract from body
+            # Optional: remove "code" from message if you don’t want duplication
+            log_entry["response"] = message_data
+            self._log_json(log_entry)
+            self._update_endpoint_stats(path, method, process_time, full_url)
+            self._save_data_with_retry()
+            return new_response
+
+        except Exception as exc:
+            process_time = time.time() - start_time
+            log_entry["status_code"] = 500
+            log_entry["process_time"] = process_time
+            log_entry["error"] = {
+                "type": str(type(exc)),
+                "message": str(exc),
+                "traceback": traceback.format_exc()
+            }
+            self._log_json(log_entry)
+            self._update_endpoint_stats(path, method, process_time, full_url)
+            self._save_data_with_retry()
+            raise exc
+
+    def _log_json(self, data):
+        #Example: Write to a file, or send to a logging system
+        api_url = "https://dev.viewcurry.com/beacon/gatekeeper/upload/save-api-response"  # Adjust as needed
+
+        #import json
+        # with open("request_logs.jsonl", "a") as f:
+        #     f.write(json.dumps(data) + "\n")
+        with httpx.Client() as client:
+            data = {
+                "client_id": self.client_id,
+                "project_id": self.project_id,
+                "response":data
+            }
+            response = client.post(api_url, json=data)
+
+            if response.status_code == 200:
+                logger.info(f"Health check data successfully sent to {api_url}")
+            else:
+                logger.warning(f"Failed to send health check data. Status code: {response.status_code}")
 
     def _save_data_with_retry(self, max_attempts: int = 3):
         for attempt in range(max_attempts):
@@ -102,13 +182,18 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
     def _add_endpoint(self, route, path: str, method: str):
         endpoint_func = route.endpoint
         class_name, functions = self._get_class_and_functions(endpoint_func)
+        schema = self._extract_schema_from_route(route)
+        # Call the new function to generate security schemes
+        security_schemes = self._generate_security_schemes(route)
         endpoint_info = {
             "_path": path,
-            "request_url":"https://dev.astranest.ai" + path,
+            "request_url":"",
             "type": method,
             "summary": self._generate_summary(path, endpoint_func),
             "response_time": 0,
-            "functions": functions
+            "functions": functions,
+            "schema": schema,
+            "security_schemes": security_schemes,
         }
         self.endpoint_data.append(endpoint_info)
 
@@ -158,7 +243,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
     def _update_endpoint_stats(self, path: str, method: str, response_time: float, full_url: str):
         for endpoint in self.endpoint_data:
             if endpoint["_path"] == path and endpoint["type"] == method:
-                endpoint["request_url"] = full_url._url
+                endpoint["request_url"] = full_url
                 endpoint["response_time"] = response_time
                 break
 
@@ -237,4 +322,51 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             else:
                 return None
         return base if callable(base) else None
+
+    def _extract_schema_from_route(self, route: APIRoute):
+        def extract_types(properties: dict):
+            cleaned = {}
+            for key, value in properties.items():
+                if "type" in value:
+                    cleaned[key] = value["type"]
+                elif "anyOf" in value:
+                    # Flatten out the types in anyOf and remove 'null'
+                    cleaned[key] = [item["type"] for item in value["anyOf"] if item.get("type") != "null"]
+                    # If only one type remains, take it, otherwise keep the list
+                    if len(cleaned[key]) == 1:
+                        cleaned[key] = cleaned[key][0]
+                    else:
+                        cleaned[key] = cleaned[key]
+                else:
+                    cleaned[key] = "unknown"
+
+            return cleaned
+
+        schema = {}
+
+        if route.body_field:
+            model = route.body_field.type_
+            if hasattr(model, "schema"):
+                raw_schema = model.schema()
+                props = raw_schema.get("properties", {})
+                schema["request_body"] = extract_types(props)
+
+        return schema
+    def _generate_security_schemes(self, route):
+        """
+        Detect security schemes (like HTTPBearer) in the endpoint's dependency tree.
+        """
+        security_schemes ={}
+        security_schemes["HTTPBearer"] = {
+                    "type": "http",
+                    "scheme": "bearer"
+                }
+
+        return security_schemes  # Corrected here
+
+
+
+
+
+
 
