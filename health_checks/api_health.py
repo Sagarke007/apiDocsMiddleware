@@ -18,11 +18,14 @@ import json
 
 # Setup logger
 log_path = Path("logs/api_health_middleware.log")
-logger = set_logger(log_name="api_health_middleware", level=20, log_file_path=log_path)  # INFO = 20
+logger = set_logger(
+    log_name="api_health_middleware", level=20, log_file_path=log_path
+)  # INFO = 20
+
 
 class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
 
-    def __init__(self, app, DSN:str):
+    def __init__(self, app, DSN: str):
         super().__init__(app)
         self.DSN = DSN
         self.endpoint_data = []
@@ -30,13 +33,12 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         self.framework = self.detect_framework(app)
         self._save_data_with_retry()
 
-
     def send_data_to_gatekeeper(self, api_url: str):
         """Send data to the gatekeeper API."""
 
         with httpx.Client() as client:
             data = {
-                 "dsn": self.DSN ,
+                "dsn": self.DSN,
                 "framework": self.framework,
                 "endpoints": self.endpoint_data,
             }
@@ -45,14 +47,15 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             if response.status_code == 200:
                 logger.info(f"Health check data successfully sent to {api_url}")
             else:
-                logger.warning(f"Failed to send health check data. Status code: {response.status_code}")
-
+                logger.warning(
+                    f"Failed to send health check data. Status code: {response.status_code}"
+                )
 
     def _get_route_path_template(self, request: Request) -> str:
         for route in request.app.routes:
             match, _ = route.matches(request.scope)
             if match == Match.FULL:
-                return getattr(route, 'path', str(request.url.path))
+                return getattr(route, "path", str(request.url.path))
         return str(request.url.path)
 
     async def dispatch(self, request: Request, call_next):
@@ -65,7 +68,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             "method": method,
             "path": path,
             "full_url": full_url,
-            "timestamp": time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
         }
 
         try:
@@ -79,11 +82,14 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                 log_entry["request_body"] = request_body  # Keep raw if not JSON
 
             # Rebuild the request stream so it can be read again
-            request = Request(request.scope, receive=lambda: {
-                "type": "http.request",
-                "body": request_body_bytes,
-                "more_body": False
-            })
+            request = Request(
+                request.scope,
+                receive=lambda: {
+                    "type": "http.request",
+                    "body": request_body_bytes,
+                    "more_body": False,
+                },
+            )
 
             response = await call_next(request)
             original_body = b""
@@ -95,7 +101,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                 content=original_body,
                 status_code=response.status_code,
                 headers=dict(response.headers),
-                media_type=response.media_type
+                media_type=response.media_type,
             )
 
             process_time = time.time() - start_time
@@ -105,10 +111,12 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                 message_data.pop("code", None)
             except:
                 message_data = original_body.decode("utf-8")
-            log_entry["status_code"] = response.status_code # Extract from body
+            log_entry["status_code"] = response.status_code  # Extract from body
             # Optional: remove "code" from message if you don’t want duplication
             log_entry["response"] = message_data
             self._log_json(log_entry)
+            self._update_endpoint_stats(path, method, process_time, full_url)
+            self._save_data_with_retry()
             return new_response
 
         except Exception as exc:
@@ -118,29 +126,30 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             log_entry["error"] = {
                 "type": str(type(exc)),
                 "message": str(exc),
-                "traceback": traceback.format_exc()
+                "traceback": traceback.format_exc(),
             }
             self._log_json(log_entry)
+            self._update_endpoint_stats(path, method, process_time, full_url)
+            self._save_data_with_retry()
             raise exc
 
     def _log_json(self, data):
-        #Example: Write to a file, or send to a logging system
+        # Example: Write to a file, or send to a logging system
         api_url = "https://dev.viewcurry.com/beacon/gatekeeper/upload/save-api-response"  # Adjust as needed
 
-        #import json
+        # import json
         # with open("request_logs.jsonl", "a") as f:
         #     f.write(json.dumps(data) + "\n")
         with httpx.Client() as client:
-            data = {
-                "dsn": self.DSN,
-                "response":data
-            }
+            data = {"dsn": self.DSN, "response": data}
             response = client.post(api_url, json=data)
 
             if response.status_code == 200:
                 logger.info(f"Health check data successfully sent to {api_url}")
             else:
-                logger.warning(f"Failed to send health check data. Status code: {response.status_code}")
+                logger.warning(
+                    f"Failed to send health check data. Status code: {response.status_code}"
+                )
 
     def _save_data_with_retry(self, max_attempts: int = 3):
         for attempt in range(max_attempts):
@@ -158,13 +167,14 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
 
     def detect_framework(self, app):
         module = type(app).__module__
-        if 'fastapi' in module:
-            return 'FastAPI'
-        elif 'starlette' in module:
-            return 'FastAPI'
-        elif 'flask' in module:
-            return 'Flask'
-        return f'Unknown ({module})'
+        if "fastapi" in module:
+            return "FastAPI"
+        elif "starlette" in module:
+            return "FastAPI"
+        elif "flask" in module:
+            return "Flask"
+        return f"Unknown ({module})"
+
     def _initialize_endpoints(self, app):
         try:
             for route in app.app.routes:
@@ -184,7 +194,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         security_schemes = self._generate_security_schemes(route)
         endpoint_info = {
             "_path": path,
-            "request_url":"",
+            "request_url": "",
             "type": method,
             "summary": self._generate_summary(path, endpoint_func),
             "response_time": 0,
@@ -203,15 +213,16 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             class_name = cls.__name__
             for name, member in inspect.getmembers(cls, predicate=inspect.isfunction):
                 if not name.startswith("_"):
-                    functions.append({
-                        "name": name,
-                        "params": self._get_parameters(member)
-                    })
+                    functions.append(
+                        {"name": name, "params": self._get_parameters(member)}
+                    )
         else:
-            functions.append({
-                "name": endpoint_func.__name__,
-                "params": self._get_parameters(endpoint_func)
-            })
+            functions.append(
+                {
+                    "name": endpoint_func.__name__,
+                    "params": self._get_parameters(endpoint_func),
+                }
+            )
             # Add any functions it calls internally
             called_funcs = self._get_called_functions(endpoint_func)
             functions.extend(called_funcs)
@@ -228,16 +239,15 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                     if param.annotation != inspect.Parameter.empty
                     else "any"
                 )
-                params.append({
-                    "name": name,
-                    "type": param_type
-                })
+                params.append({"name": name, "type": param_type})
         except Exception as e:
             logger.warning(f"Parameter inspection failed: {str(e)}")
 
         return params
 
-    def _update_endpoint_stats(self, path: str, method: str, response_time: float, full_url: str):
+    def _update_endpoint_stats(
+        self, path: str, method: str, response_time: float, full_url: str
+    ):
         for endpoint in self.endpoint_data:
             if endpoint["_path"] == path and endpoint["type"] == method:
                 endpoint["request_url"] = full_url
@@ -261,25 +271,32 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
 
             # List of function names to exclude
             exclude_functions = {
-                'HTTPResponse', 'Depends', 'router.get', 'router.post',
-                'app.get', 'app.post', 'FastAPI', 'JSONResponse'
+                "HTTPResponse",
+                "Depends",
+                "router.get",
+                "router.post",
+                "app.get",
+                "app.post",
+                "FastAPI",
+                "JSONResponse",
             }
 
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call):
                     func_name = self._extract_call_chain(node)
                     if func_name and not any(
-                            func_name.startswith(excluded)
-                            for excluded in exclude_functions
+                        func_name.startswith(excluded) for excluded in exclude_functions
                     ):
                         # Skip FastAPI internals and HTTP response methods
-                        if not func_name.split('.')[0] in exclude_functions:
+                        if not func_name.split(".")[0] in exclude_functions:
                             func_obj = self._resolve_function(endpoint_func, func_name)
                             if func_obj and callable(func_obj):
-                                called_funcs.append({
-                                    "name": func_name,
-                                    "params": self._get_parameters(func_obj)
-                                })
+                                called_funcs.append(
+                                    {
+                                        "name": func_name,
+                                        "params": self._get_parameters(func_obj),
+                                    }
+                                )
 
         except Exception as e:
             logger.warning(f"Failed to extract called functions: {str(e)}")
@@ -288,8 +305,8 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         seen = set()
         unique_funcs = []
         for f in called_funcs:
-            if f['name'] not in seen:
-                seen.add(f['name'])
+            if f["name"] not in seen:
+                seen.add(f["name"])
                 unique_funcs.append(f)
 
         return unique_funcs
@@ -310,7 +327,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
 
     def _resolve_function(self, endpoint_func, func_name):
         """Resolves a function name to its object (supports nested/module calls)"""
-        parts = func_name.split('.')
+        parts = func_name.split(".")
         base = endpoint_func.__globals__.get(parts[0])
 
         for part in parts[1:]:
@@ -328,7 +345,11 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                     cleaned[key] = value["type"]
                 elif "anyOf" in value:
                     # Flatten out the types in anyOf and remove 'null'
-                    cleaned[key] = [item["type"] for item in value["anyOf"] if item.get("type") != "null"]
+                    cleaned[key] = [
+                        item["type"]
+                        for item in value["anyOf"]
+                        if item.get("type") != "null"
+                    ]
                     # If only one type remains, take it, otherwise keep the list
                     if len(cleaned[key]) == 1:
                         cleaned[key] = cleaned[key][0]
@@ -349,21 +370,12 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                 schema["request_body"] = extract_types(props)
 
         return schema
+
     def _generate_security_schemes(self, route):
         """
         Detect security schemes (like HTTPBearer) in the endpoint's dependency tree.
         """
-        security_schemes ={}
-        security_schemes["HTTPBearer"] = {
-                    "type": "http",
-                    "scheme": "bearer"
-                }
+        security_schemes = {}
+        security_schemes["HTTPBearer"] = {"type": "http", "scheme": "bearer"}
 
         return security_schemes  # Corrected here
-
-
-
-
-
-
-
