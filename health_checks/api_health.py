@@ -126,7 +126,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             log_entry["error"] = {
                 "type": str(type(exc)),
                 "message": str(exc),
-                "traceback": traceback.format_exc(),
+                "traceback": self.format_browser_debugger_style(exc),
             }
             self._log_json(log_entry)
             self._update_endpoint_stats(path, method, process_time, full_url)
@@ -379,3 +379,47 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         security_schemes["HTTPBearer"] = {"type": "http", "scheme": "bearer"}
 
         return security_schemes  # Corrected here
+
+    def format_browser_debugger_style(self, exc, exclude_files=None, frame_context=5):
+        if exclude_files is None:
+            exclude_files = ["api_health.py", "routing.py", "_asyncio.py", "_exception_handler.py", "base.py",
+                             "exceptions.py", "to_thread.py", "concurrency.py"]  # Add more patterns or paths as needed
+
+        tb = exc.__traceback__
+        formatted = []
+
+        while tb:
+            frame = tb.tb_frame
+            lineno = tb.tb_lineno
+            filename = frame.f_code.co_filename
+            function = frame.f_code.co_name
+
+            # Skip middleware files
+            if any(ef in filename for ef in exclude_files):
+                tb = tb.tb_next
+                continue
+
+            section = [
+                f"🔥 Exception: {type(exc).__name__}",
+                f"📄 File: {filename}, line {lineno}",
+                f"🔧 Function: {function}"
+            ]
+
+            # Get code context if available
+            try:
+                lines, start_line = inspect.getsourcelines(frame.f_code)
+                context = ""
+                for idx, code_line in enumerate(lines):
+                    actual_line = start_line + idx
+                    pointer = "➡️" if actual_line == lineno else "   "
+                    context += f"{pointer} {actual_line:>4} | {code_line}"
+                section.append(f"\n📌 Code snippet:\n{context.strip()}")
+            except OSError:
+                section.append("\n📌 Code snippet: [Unavailable]")
+
+            formatted.append("\n".join(section))
+            tb = tb.tb_next
+
+        formatted.append(
+            f"\n🧵 Full stack trace:\n{''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))}")
+        return "\n\n".join(formatted)
