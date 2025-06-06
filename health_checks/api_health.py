@@ -449,7 +449,12 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             self.endpoint_data = []
             self._initialize_flask_endpoints(app)
             flask_g.start_time = time.time()
-            path = flask_request.endpoint
+            process_time = time.time() - flask_g.start_time
+            if flask_request.url_rule:
+                path = flask_request.url_rule.rule  # Gives '/add-values'
+            else:
+                path = flask_request.path  # Fallback for edge cases
+            method = flask_request.method.lower()
             flask_g.current_request_key = f"{flask_request.method.lower()} {path}"
             flask_g.log_entry = {
                 "method": flask_request.method.lower(),
@@ -464,6 +469,8 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                 # Skip further logging or processing if desired
                 return response
             process_time = time.time() - flask_g.start_time
+            if flask_request.url_rule:
+                path = flask_request.url_rule.rule
             method = flask_request.method.lower()
             if flask_request.url_rule:
                 path = flask_request.url_rule.rule  # Gives '/add-values'
