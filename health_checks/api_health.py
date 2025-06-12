@@ -590,9 +590,9 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                 "_path": rule.rule,
                 "request_url": "",  # You can set a base URL here if needed
                 "type": ','.join(methods).lower(),
-                "summary": self._generate_summary(rule.rule, endpoint_func),
+                #"summary": self._generate_summary(rule.rule, endpoint_func),
                 "response_time": 0,
-                "functions": functions,
+                #"functions": functions,
                 "schema": self._extract_flask_schema(endpoint_func),
                 "security_schemes": self._generate_flask_security_schemes(endpoint_func),
             }
