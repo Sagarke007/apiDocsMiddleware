@@ -59,6 +59,8 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                 "framework": self.framework,
                 "endpoints": self.endpoint_data,
             }
+            print(endpoint_data)
+            print(f"Sending health check data to {api_url} with DSN: {self.DSN}")
             response = client.post(api_url, json=data)
 
             if response.status_code == 200:
