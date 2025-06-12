@@ -16,6 +16,7 @@ from starlette.responses import Response
 import traceback
 import json
 from collections import defaultdict
+from threading import Thread
 
 # Import Flask stuff
 try:
@@ -42,6 +43,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         self.framework = framework.lower()
         if self.framework == "flask" and app is not None:
             self._init_flask(app)
+            self._initialize_flask_endpoints(app)  # Initialize once here
         else:
             # FastAPI (or Starlette) init
             self._initialize_endpoints(app)
@@ -154,22 +156,21 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             raise exc
 
     def _log_json(self, data):
-        # Example: Write to a file, or send to a logging system
-        api_url = "https://dev.viewcurry.com/beacon/gatekeeper/upload/save-api-response"  # Adjust as needed
+        api_url = "https://dev.viewcurry.com/beacon/gatekeeper/upload/save-api-response"
 
-        # import json
-        # with open("request_logs.jsonl", "a") as f:
-        #     f.write(json.dumps(data) + "\n")
-        with httpx.Client() as client:
-            data = {"dsn": self.DSN, "response": data}
-            response = client.post(api_url, json=data)
+        def send_log():
+            try:
+                with httpx.Client() as client:
+                    payload = {"dsn": self.DSN, "response": data}
+                    response = client.post(api_url, json=payload)
+                    if response.status_code == 200:
+                        logger.info(f"Health check data successfully sent to {api_url}")
+                    else:
+                        logger.warning(f"Failed to send health check data. Status code: {response.status_code}")
+            except Exception as e:
+                logger.error(f"Error sending health check data: {e}")
 
-            if response.status_code == 200:
-                logger.info(f"Health check data successfully sent to {api_url}")
-            else:
-                logger.warning(
-                    f"Failed to send health check data. Status code: {response.status_code}"
-                )
+        Thread(target=send_log).start()
 
     def _save_data_with_retry(self, max_attempts: int = 3):
         for attempt in range(max_attempts):
@@ -446,18 +447,15 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         @app.before_request
         def before_request():
             # Initialize endpoints for Flask
-            self.endpoint_data = []
-            self._initialize_flask_endpoints(app)
             flask_g.start_time = time.time()
-            process_time = time.time() - flask_g.start_time
             if flask_request.url_rule:
-                path = flask_request.url_rule.rule  # Gives '/add-values'
+                path = flask_request.url_rule.rule
             else:
-                path = flask_request.path  # Fallback for edge cases
+                path = flask_request.path
             method = flask_request.method.lower()
-            flask_g.current_request_key = f"{flask_request.method.lower()} {path}"
+            flask_g.current_request_key = f"{method} {path}"
             flask_g.log_entry = {
-                "method": flask_request.method.lower(),
+                "method": method,
                 "path": path,
                 "full_url": flask_request.url,
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
@@ -466,20 +464,16 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         @app.after_request
         def after_request(response):
             if 400 <= response.status_code >= 500:
-                # Skip further logging or processing if desired
                 return response
+
             process_time = time.time() - flask_g.start_time
             if flask_request.url_rule:
                 path = flask_request.url_rule.rule
-            method = flask_request.method.lower()
-            if flask_request.url_rule:
-                path = flask_request.url_rule.rule  # Gives '/add-values'
             else:
-                path = flask_request.path  # Fallback for edge cases
-            # Get request body
-            request_body = self._get_flask_request_body()
+                path = flask_request.path
+            method = flask_request.method.lower()
 
-            # Get response data
+            request_body = self._get_flask_request_body()
             response_data = self._get_flask_response_data(response)
 
             flask_g.log_entry.update({
@@ -490,8 +484,12 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             })
 
             self._update_endpoint_stats(path, method, process_time, flask_request.url, request_body)
-            self._log_json(flask_g.log_entry)
-            self._save_data_with_retry()
+
+            # Send log asynchronously
+            from threading import Thread
+            Thread(target=self._log_json, args=(flask_g.log_entry,)).start()
+
+            self._save_data_with_retry()  # Optional: you can also make this async or batch it
 
             return response
 
