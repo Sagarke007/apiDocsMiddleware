@@ -567,7 +567,9 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
 
     def _initialize_flask_endpoints(self, app):
         """Fetch and store all Flask endpoints with metadata."""
+        print("Routes before middleware:")
         for rule in app.url_map.iter_rules():
+            print(rule)
             if rule.endpoint == "static":
                 continue
             endpoint = rule.endpoint
