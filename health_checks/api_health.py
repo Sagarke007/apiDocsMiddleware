@@ -42,9 +42,13 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         self.query_metrics = defaultdict(list)
         self.framework = framework.lower()
         if self.framework == "flask" and app is not None:
+            print("framework",framework)
             self._init_flask(app)
+
             self._initialize_flask_endpoints(app)  # Initialize once here
+            print("Flask endpoints initialized:", self.endpoint_data)
             self._save_data_with_retry()
+            print("saved data with retry")
         else:
             # FastAPI (or Starlette) init
             self._initialize_endpoints(app)
