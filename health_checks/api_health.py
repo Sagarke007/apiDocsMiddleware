@@ -42,13 +42,9 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
         self.query_metrics = defaultdict(list)
         self.framework = framework.lower()
         if self.framework == "flask" and app is not None:
-            print("framework",framework)
             self._init_flask(app)
-
             self._initialize_flask_endpoints(app)  # Initialize once here
-            print("Flask endpoints initialized:", self.endpoint_data)
             self._save_data_with_retry()
-            print("saved data with retry")
         else:
             # FastAPI (or Starlette) init
             self._initialize_endpoints(app)
@@ -63,9 +59,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
                 "framework": self.framework,
                 "endpoints": self.endpoint_data,
             }
-            print(data)
             response = client.post(api_url, json=data)
-            print(response.status_code)
             if response.status_code == 200:
                 logger.info(f"Health check data successfully sent to {api_url}")
             else:
@@ -572,9 +566,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
 
     def _initialize_flask_endpoints(self, app):
         """Fetch and store all Flask endpoints with metadata."""
-        print("Routes before middleware:")
         for rule in app.url_map.iter_rules():
-            print(rule)
             if rule.endpoint == "static":
                 continue
             endpoint = rule.endpoint
@@ -584,8 +576,7 @@ class ApiHealthCheckMiddleware(BaseHTTPMiddleware):
             if endpoint_func is None:
                 continue
 
-            class_name, functions = self._get_class_and_functions(endpoint_func)
-
+            #class_name, functions = self._get_class_and_functions(endpoint_func)
             endpoint_info = {
                 "_path": rule.rule,
                 "request_url": "",  # You can set a base URL here if needed
