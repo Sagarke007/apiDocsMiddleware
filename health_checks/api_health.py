@@ -1,55 +1,13 @@
-# """
-# class for middleware to check the health of APIs
-# """
-#
-# import ast  # Add this line at the top with other imports
-import httpx
-# import time
-# import inspect
-from pathlib import Path
-# from fastapi import Request
-# from starlette.middleware.base import BaseHTTPMiddleware
-# from fastapi.routing import APIRoute
-# from starlette.routing import Match
-from health_checks.logger import set_logger  # adjust path if needed
-# from starlette.responses import Response
-# import traceback
-# import json
-# from collections import defaultdict
-from threading import Thread
-# try:
-#     from flask import request as flask_request, g as flask_g, current_app as flask_current_app, jsonify
-# except ImportError:
-#     flask_request = None
-#     flask_g = None
-#     flask_current_app = None
-#
-# Setup logger
-import asyncio
-
-log_path = Path("logs/api_health_middleware.log")
-logger = set_logger(
-    log_name="api_health_middleware", level=20, log_file_path=log_path
-)  # INFO = 20
-#
-
-
-
-# Custom middleware class
-
-import json
 import time
+import json
 import traceback
-import logging
+import threading
+import queue
 from flask import request as flask_request, g as flask_g, jsonify
-from concurrent.futures import ThreadPoolExecutor
 import httpx
+import logging
 
 logger = logging.getLogger(__name__)
-
-# Thread pool to handle background logging & API posting
-executor = ThreadPoolExecutor(max_workers=10)
-
 
 class CustomMiddleware:
     def __init__(self, flask_app, framework: str, dsn: str = ""):
@@ -57,6 +15,9 @@ class CustomMiddleware:
         self.DSN = dsn
         self.framework = framework
         self.endpoint_data = []
+
+        self.log_queue = queue.Queue()
+        self._start_background_worker()
 
         self._init_flask_hooks(flask_app)
         self._register_error_handler(flask_app)
@@ -79,25 +40,26 @@ class CustomMiddleware:
                 process_time = time.time() - flask_g.start_time
                 path = flask_request.url_rule.rule if flask_request.url_rule else flask_request.path
                 method = flask_request.method.lower()
-
                 request_body = self._safe_json(flask_request)
                 response_body = self._safe_json(response)
 
                 flask_g.log_entry.update({
                     "status_code": response.status_code,
                     "process_time": round(process_time, 4),
-                    "path": flask_request.path,
+                    "path": path,
                     "request_body": request_body,
                     "response": response_body,
                 })
 
-                executor.submit(self._log_json, flask_g.log_entry)
+                self.log_queue.put(("response", {
+                    "dsn": self.DSN,
+                    "response": flask_g.log_entry
+                }))
                 self._update_endpoint_stats(path, method, process_time, flask_request.url, request_body)
-                self._save_data_with_retry()
+                self._save_data_to_health()
 
             except Exception as e:
-                logger.exception(f"[Middleware Error] {str(e)}")
-
+                logger.exception(f"after_request logging error: {e}")
             return response
 
     def _register_error_handler(self, app):
@@ -115,17 +77,20 @@ class CustomMiddleware:
                     "traceback": traceback.format_exc()
                 }
             }
-            executor.submit(self._log_json, error_entry)
+            self.log_queue.put(("response", {
+                "dsn": self.DSN,
+                "response": error_entry
+            }))
             return jsonify(error_entry["error"]), error_entry["status_code"]
 
     def _initialize_flask_endpoints(self, app):
         for rule in app.url_map.iter_rules():
             if rule.endpoint == "static":
                 continue
-            endpoint = rule.endpoint
-            methods = sorted(m for m in rule.methods if m not in ('HEAD', 'OPTIONS'))
-            if not app.view_functions.get(endpoint):
+            endpoint_func = app.view_functions.get(rule.endpoint)
+            if not endpoint_func:
                 continue
+            methods = sorted(m for m in rule.methods if m not in ('HEAD', 'OPTIONS'))
             self.endpoint_data.append({
                 "_path": rule.rule,
                 "request_url": "",
@@ -143,9 +108,12 @@ class CustomMiddleware:
                 endpoint["response_time"] = response_time
                 break
 
-    def _save_data_with_retry(self):
-        executor.submit(self.send_data_to_gatekeeper,
-                        "https://dev.viewcurry.com/beacon/gatekeeper/upload/send-api-health-data")
+    def _save_data_to_health(self):
+        self.log_queue.put(("health", {
+            "dsn": self.DSN,
+            "framework": self.framework,
+            "endpoints": self.endpoint_data,
+        }))
 
     def _safe_json(self, source):
         try:
@@ -155,63 +123,42 @@ class CustomMiddleware:
         except Exception:
             return "<unparseable>"
 
-    def _log_json(self, data):
+    def _start_background_worker(self):
+        def worker():
+            while True:
+                try:
+                    log_type, payload = self.log_queue.get()
+                    if log_type == "response":
+                        self._send_response_log(payload)
+                    elif log_type == "health":
+                        self._send_health_log(payload)
+                    self.log_queue.task_done()
+                except Exception as e:
+                    logger.exception(f"Worker error: {e}")
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
+    def _send_response_log(self, payload):
         api_url = "https://dev.viewcurry.com/beacon/gatekeeper/upload/save-api-response"
         try:
             with httpx.Client(timeout=5.0) as client:
-                payload = {"dsn": self.DSN, "response": data}
                 response = client.post(api_url, json=payload)
-                if response.status_code == 200:
-                    logger.info(f"Health check data sent to {api_url}")
-                else:
-                    logger.warning(f"Failed to send health data: {response.status_code}")
+                if response.status_code != 200:
+                    logger.warning(f"[Gatekeeper] save-api-response failed: {response.status_code}")
         except httpx.ReadTimeout:
-            logger.warning(f"[Timeout] Health check POST timed out: {api_url}")
+            logger.warning(f"[Timeout] POST timed out: {api_url}")
         except Exception as e:
-            logger.exception(f"Log send error: {e}")
+            logger.error(f"Error sending response log: {e}")
 
-    def send_data_to_gatekeeper(self, api_url: str):
+    def _send_health_log(self, payload):
+        api_url = "https://dev.viewcurry.com/beacon/gatekeeper/upload/send-api-health-data"
         try:
             with httpx.Client(timeout=5.0) as client:
-                payload = {
-                    "dsn": self.DSN,
-                    "framework": self.framework,
-                    "endpoints": self.endpoint_data,
-                }
                 response = client.post(api_url, json=payload)
-                if response.status_code == 200:
-                    logger.info(f"Health check summary sent to {api_url}")
-                else:
-                    logger.warning(f"Failed to send summary: {response.status_code}")
+                if response.status_code != 200:
+                    logger.warning(f"[Gatekeeper] send-api-health-data failed: {response.status_code}")
         except httpx.ReadTimeout:
-            logger.warning(f"[Timeout] Health check POST timed out: {api_url}")
+            logger.warning(f"[Timeout] POST timed out: {api_url}")
         except Exception as e:
-            logger.exception(f"Send summary error: {e}")
-
-
-from starlette.middleware.base import BaseHTTPMiddleware
-from fastapi import Request
-
-
-class FastAPICustomMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, dsn: str):
-        super().__init__(app)
-        self.dsn = dsn
-
-    async def dispatch(self, request: Request, call_next):
-        print(f"[FastAPI Middleware] {request.method} request to {request.url.path}")
-        print("DSN:", self.dsn)
-        response = await call_next(request)
-        return response
-
-
-
-
-
-
-
-
-
-
-
-
+            logger.error(f"Error sending health log: {e}")
