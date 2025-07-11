@@ -1,3 +1,42 @@
+# """
+# class for middleware to check the health of APIs
+# """
+#
+# import ast  # Add this line at the top with other imports
+import httpx
+# import time
+# import inspect
+from pathlib import Path
+# from fastapi import Request
+# from starlette.middleware.base import BaseHTTPMiddleware
+# from fastapi.routing import APIRoute
+# from starlette.routing import Match
+from health_checks.logger import set_logger  # adjust path if needed
+# from starlette.responses import Response
+# import traceback
+# import json
+# from collections import defaultdict
+from threading import Thread
+# try:
+#     from flask import request as flask_request, g as flask_g, current_app as flask_current_app, jsonify
+# except ImportError:
+#     flask_request = None
+#     flask_g = None
+#     flask_current_app = None
+#
+# Setup logger
+import asyncio
+
+log_path = Path("logs/api_health_middleware.log")
+logger = set_logger(
+    log_name="api_health_middleware", level=20, log_file_path=log_path
+)  # INFO = 20
+#
+
+
+
+# Custom middleware class
+
 import json
 import time
 import traceback
@@ -126,6 +165,8 @@ class CustomMiddleware:
                     logger.info(f"Health check data sent to {api_url}")
                 else:
                     logger.warning(f"Failed to send health data: {response.status_code}")
+        except httpx.ReadTimeout:
+            logger.warning(f"[Timeout] Health check POST timed out: {api_url}")
         except Exception as e:
             logger.exception(f"Log send error: {e}")
 
@@ -142,5 +183,35 @@ class CustomMiddleware:
                     logger.info(f"Health check summary sent to {api_url}")
                 else:
                     logger.warning(f"Failed to send summary: {response.status_code}")
+        except httpx.ReadTimeout:
+            logger.warning(f"[Timeout] Health check POST timed out: {api_url}")
         except Exception as e:
             logger.exception(f"Send summary error: {e}")
+
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi import Request
+
+
+class FastAPICustomMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, dsn: str):
+        super().__init__(app)
+        self.dsn = dsn
+
+    async def dispatch(self, request: Request, call_next):
+        print(f"[FastAPI Middleware] {request.method} request to {request.url.path}")
+        print("DSN:", self.dsn)
+        response = await call_next(request)
+        return response
+
+
+
+
+
+
+
+
+
+
+
+
