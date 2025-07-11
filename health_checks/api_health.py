@@ -158,7 +158,7 @@ class CustomMiddleware:
     def _log_json(self, data):
         api_url = "https://dev.viewcurry.com/beacon/gatekeeper/upload/save-api-response"
         try:
-            with httpx.Client(timeout=2.0) as client:
+            with httpx.Client(timeout=5.0) as client:
                 payload = {"dsn": self.DSN, "response": data}
                 response = client.post(api_url, json=payload)
                 if response.status_code == 200:
@@ -172,7 +172,7 @@ class CustomMiddleware:
 
     def send_data_to_gatekeeper(self, api_url: str):
         try:
-            with httpx.Client(timeout=2.0) as client:
+            with httpx.Client(timeout=5.0) as client:
                 payload = {
                     "dsn": self.DSN,
                     "framework": self.framework,
