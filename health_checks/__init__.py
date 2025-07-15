@@ -1,3 +1,3 @@
-from .api_health import CustomMiddleware
+from .api_health import ApiHealthCheckMiddleware
 
 __all__ = ['ApiHealthCheckMiddleware']
