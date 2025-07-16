@@ -16,6 +16,7 @@ import tempfile
 import os
 import requests
 from apscheduler.schedulers.background import BackgroundScheduler
+import dataclasses
 
 # Setup logger
 log_path = Path("logs/api_monitor.log")
@@ -30,8 +31,8 @@ logger.addHandler(handler)
 
 @dataclass
 class EndpointStats:
-    path: str
-    methods: str
+    _path: str
+    type: str
     request_url: str = ""
     response_time: float = 0.0
     schema: Dict = field(default_factory=dict)
@@ -109,7 +110,7 @@ class ApiHealthCheckMiddleware:
         self.scheduler.add_job(
             self._run_scheduled_task,
             'interval',
-            seconds=45,
+            seconds=5,
             max_instances=1
         )
         self.scheduler.start()
@@ -329,6 +330,7 @@ class ApiHealthCheckMiddleware:
 
             if all([path, method, process_time, url]):
                 self._update_endpoint_metrics(path, method, process_time, url)
+                await self._send_endspoints()
         except Exception as e:
             logger.exception("Background task failed: %s", str(e))
 
@@ -457,11 +459,26 @@ class ApiHealthCheckMiddleware:
         except RuntimeError as e:
             logger.warning("Cannot send summary: %s", e)
 
+    async def _send_endspoints(self):
+        """Periodically send endpoint health summary"""
+        try:
+            response = await self.async_client.post(
+                "https://dev.viewcurry.com/beacon/gatekeeper/upload/send-api-health-data",
+                json={
+                    "dsn": self.dsn,
+                    "framework": self.framework,
+                    "endpoints": [dataclasses.asdict(e) for e in self.endpoint_data],
+                }
+            )
+            response.raise_for_status()
+        except Exception as e:
+            logger.warning("Failed to send health summary: %s", str(e))
+
     def _update_endpoint_metrics(self, path: str, method: str,
                                  response_time: float, url: str):
         """Update endpoint performance metrics"""
         for endpoint in self.endpoint_data:
-            if endpoint.path == path and endpoint.methods == method:
+            if endpoint._path == path and endpoint.type == method:
                 endpoint.request_url = url
                 endpoint.response_time = response_time
                 break
@@ -521,8 +538,8 @@ class ApiHealthCheckMiddleware:
                 continue
             methods = sorted(m for m in rule.methods if m not in ('HEAD', 'OPTIONS'))
             self.endpoint_data.append(EndpointStats(
-                path=rule.rule,
-                methods=",".join(methods).lower()
+                _path=rule.rule,
+                type=",".join(methods).lower()
             ))
 
     # Common helpers ==============================================
