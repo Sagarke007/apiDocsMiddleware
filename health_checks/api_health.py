@@ -110,7 +110,7 @@ class ApiHealthCheckMiddleware:
         self.scheduler.add_job(
             self._run_scheduled_task,
             'interval',
-            seconds=30,
+            seconds=45,
             max_instances=1
         )
         self.scheduler.start()
